@@ -1,0 +1,202 @@
+import org.objectweb.asm.ClassReader
+import org.objectweb.asm.ClassWriter
+import org.objectweb.asm.commons.ClassRemapper
+import org.objectweb.asm.commons.Remapper
+
+import java.util.zip.ZipFile
+
+buildscript {
+	dependencies {
+		classpath files('libs/asm-6.0.jar', 'libs/asm-commons-6.0.jar', 'libs/asm-tree-6.0.jar')
+	}
+}
+
+plugins {
+	id 'java'
+}
+
+group = 'fr.deltabuild'
+//Version du jar, remplacée par celle du tag lors d'une release GitHub (-PreleaseVersion=...)
+version = findProperty('releaseVersion') ?: '1.0.0'
+
+def asmJars = files('libs/asm-6.0.jar', 'libs/asm-tree-6.0.jar')
+def asmCommons = files('libs/asm-commons-6.0.jar')
+//Jars MCPC (non fournis) : seulement pour régénérer les stubs
+def mcpcJars = files('libs/mcpc-srg.jar', 'libs/minecraft_server.jar')
+//Signatures des classes MCPC utilisées par Chunk (générées par tools/Stubs.java)
+def mcpcStubs = files('libs/mcpc-stubs.jar')
+
+sourceSets {
+	replace {
+		java { srcDirs = ['src/replace/java'] }
+	}
+	tools {
+		java { srcDirs = ['tools'] }
+	}
+}
+
+dependencies {
+	implementation asmJars
+	compileOnly files('libs/launchwrapper-1.8.jar')
+	replaceCompileOnly mcpcStubs
+	toolsImplementation asmJars
+	toolsImplementation asmCommons
+}
+
+tasks.withType(JavaCompile).configureEach {
+	options.encoding = 'UTF-8'
+	options.release = 8
+	options.compilerArgs += ['-nowarn', '-Xlint:-options']
+}
+
+//Outils lancés pendant le build (JDK du build)
+tasks.named('compileToolsJava') {
+	options.release = 17
+}
+
+//Vérification des jars MCPC pour les tâches mcpcSrg / mcpcStubs
+def checkMcpc = { List<String> names ->
+	names.each { n ->
+		if (!file("libs/${n}").exists()) {
+			throw new GradleException("Fichier manquant : libs/${n} (voir README, section Compiler)")
+		}
+	}
+}
+
+//Génère libs/mcpc-srg.jar à partir de libs/minecraft_server.jar et build/srg.txt
+tasks.register('mcpcSrg', JavaExec) {
+	group = 'deltaheight'
+	description = 'Génère libs/mcpc-srg.jar (jar MCPC en noms SRG)'
+	classpath = sourceSets.tools.runtimeClasspath
+	mainClass = 'Deobf'
+	args 'build/srg.txt', 'libs/minecraft_server.jar', 'libs/mcpc-srg.jar'
+	doFirst {
+		checkMcpc(['minecraft_server.jar'])
+		if (!file('build/srg.txt').exists()) {
+			throw new GradleException('Fichier manquant : build/srg.txt (voir tools/Deobf.java)')
+		}
+	}
+}
+
+//Chunk compilé contre les vrais jars MCPC, pour générer les stubs
+def compileChunkMcpc = tasks.register('compileChunkMcpc', JavaCompile) {
+	source = sourceSets.replace.java
+	classpath = mcpcJars
+	destinationDirectory = layout.buildDirectory.dir('chunk-mcpc')
+	doFirst { checkMcpc(['mcpc-srg.jar', 'minecraft_server.jar']) }
+}
+
+//Régénère libs/mcpc-stubs.jar (à refaire si Chunk.java utilise de nouvelles classes ou méthodes MCPC)
+tasks.register('mcpcStubs', JavaExec) {
+	group = 'deltaheight'
+	description = 'Régénère libs/mcpc-stubs.jar'
+	dependsOn compileChunkMcpc
+	classpath = sourceSets.tools.runtimeClasspath
+	mainClass = 'Stubs'
+	args 'build/chunk-mcpc/net/minecraft/world/chunk/Chunk.class', 'libs/mcpc-stubs.jar', 'libs/mcpc-srg.jar', 'libs/minecraft_server.jar'
+}
+
+def shadowPrefix = 'fr/deltabuild/deltaheight/shadow/asm/'
+def asmPrefix = 'org/objectweb/asm/'
+
+def classFiles = { File root ->
+	def found = []
+	if (root.isDirectory()) {
+		root.eachFileRecurse(groovy.io.FileType.FILES) { f ->
+			if (f.name.endsWith('.class')) {
+				found << [root.toPath().relativize(f.toPath()).toString().replace(File.separatorChar, (char) '/'), f]
+			}
+		}
+	}
+	return found
+}
+
+//Agent + ASM relocalisé
+def mainClassesDirs = sourceSets.main.output.classesDirs
+def relocate = tasks.register('relocateAgent') {
+	def outDir = layout.buildDirectory.dir('relocated')
+	inputs.files(mainClassesDirs)
+	inputs.files(asmJars)
+	outputs.dir(outDir)
+	dependsOn tasks.named('classes')
+	doLast {
+		def out = outDir.get().asFile
+		out.deleteDir()
+		def remapper = new Remapper() {
+			@Override
+			String map(String name) {
+				return name.startsWith(asmPrefix) ? shadowPrefix + name.substring(asmPrefix.length()) : name
+			}
+		}
+		def write = { byte[] bytes ->
+			def reader = new ClassReader(bytes)
+			def writer = new ClassWriter(0)
+			reader.accept(new ClassRemapper(writer, remapper), 0)
+			def target = new File(out, remapper.map(reader.className) + '.class')
+			target.parentFile.mkdirs()
+			target.bytes = writer.toByteArray()
+		}
+		mainClassesDirs.each { dir -> classFiles(dir).each { write(it[1].bytes) } }
+		asmJars.each { jar ->
+			new ZipFile(jar).withCloseable { zip ->
+				zip.entries().findAll { it.name.startsWith(asmPrefix) && it.name.endsWith('.class') }.each {
+					write(zip.getInputStream(it).bytes)
+				}
+			}
+		}
+	}
+}
+
+//Chunk en bytecode Java 6 (obligatoire pour les patchs d'ID de l'agent Java 17)
+def replaceClassesDirs = sourceSets.replace.output.classesDirs
+def replaceBin = tasks.register('replaceBin') {
+	def outDir = layout.buildDirectory.dir('replace-bin')
+	inputs.files(replaceClassesDirs)
+	outputs.dir(outDir)
+	dependsOn tasks.named('replaceClasses')
+	doLast {
+		def out = outDir.get().asFile
+		out.deleteDir()
+		replaceClassesDirs.each { dir ->
+			classFiles(dir).each { entry ->
+				byte[] bytes = entry[1].bytes
+				bytes[6] = 0
+				bytes[7] = 50 //Java 6
+				def target = new File(out, 'deltaheight/replace/' + entry[0] + '.bin')
+				target.parentFile.mkdirs()
+				target.bytes = bytes
+			}
+		}
+	}
+}
+
+tasks.named('jar') {
+	enabled = false
+}
+
+def agentJar = tasks.register('agentJar', Jar) {
+	group = 'build'
+	description = 'Construit build/libs/DeltaHeight.jar'
+	archiveFileName = 'DeltaHeight.jar'
+	destinationDirectory = layout.buildDirectory.dir('libs')
+	from(relocate)
+	from(replaceBin)
+	//Licences (MIT + ASM)
+	from('LICENSE') { into 'META-INF' }
+	from('licenses') { into 'META-INF/licenses' }
+	manifest {
+		attributes(
+			'Premain-Class': 'fr.deltabuild.deltaheight.DeltaHeightAgent',
+			'Agent-Class': 'fr.deltabuild.deltaheight.DeltaHeightAgent',
+			'Can-Redefine-Classes': 'false',
+			'Can-Retransform-Classes': 'false',
+			'Implementation-Title': 'DeltaHeight',
+			'Implementation-Version': project.version,
+			'Implementation-Vendor': 'DeltaBuild'
+		)
+	}
+}
+
+tasks.named('assemble') {
+	dependsOn agentJar
+}

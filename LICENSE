@@ -1,0 +1,33 @@
+MIT License
+
+Copyright (c) 2026 DeltaBuild
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
+---
+
+Third-party content, not covered by the license above:
+
+  - ASM 6.0 (BSD 3-Clause License, see licenses/ASM-LICENSE.txt):
+    libs/asm-*.jar, bundled and relocated in DeltaHeight.jar.
+  - launchwrapper 1.8 (MIT License): libs/launchwrapper-1.8.jar, used to compile only.
+  - src/replace/java/net/minecraft/world/chunk/Chunk.java is derived from the
+    Minecraft / MCPC+ server code, and libs/mcpc-stubs.jar contains MCPC+ class
+    and method signatures. These parts remain subject to the rights of their
+    respective owners.

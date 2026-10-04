@@ -1,0 +1,7 @@
+build/
+.gradle/
+.idea/
+*.iml
+# Jars MCPC (à copier depuis le serveur)
+libs/minecraft_server.jar
+libs/mcpc-srg.jar
