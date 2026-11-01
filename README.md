@@ -1,3 +1,5 @@
+⚠️ Ce dépôt est obsolète. Retrouvez la nouvelle version ici : https://github.com/DeltaBuild/DeltaAgent
+
 # DeltaHeight
 
 Javaagent pour serveur MCPC+ 1.6.4 qui étend la hauteur du monde de Y -64 à Y 319 (24 sections au lieu de 16), sans toucher au jar du serveur.
